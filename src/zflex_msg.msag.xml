@@ -1,0 +1,308 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<abapGit version="v1.0.0" serializer="LCL_OBJECT_MSAG" serializer_version="v1.0.0">
+ <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+  <asx:values>
+   <T100A>
+    <ARBGB>ZFLEX_MSG</ARBGB>
+    <MASTERLANG>E</MASTERLANG>
+    <STEXT>ZFLEX_MSG</STEXT>
+   </T100A>
+   <T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>001</MSGNR>
+     <TEXT>Only Z or Y tables are allowed</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>002</MSGNR>
+     <TEXT>Transparent table does not exist or is inactive</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>003</MSGNR>
+     <TEXT>No display authorization for table &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>004</MSGNR>
+     <TEXT>No change authorization for table &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>005</MSGNR>
+     <TEXT>Error generating field catalog for &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>006</MSGNR>
+     <TEXT>&amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>010</MSGNR>
+     <TEXT>Downloaded &amp;1 records to XLSX successfully</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>011</MSGNR>
+     <TEXT>Error downloading file</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>014</MSGNR>
+     <TEXT>Switch to edit mode before &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>015</MSGNR>
+     <TEXT>Upload error. Could not read frontend XLSX file</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>016</MSGNR>
+     <TEXT>Upload error. XLSX has no worksheet</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>017</MSGNR>
+     <TEXT>Upload file contains no data rows</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>018</MSGNR>
+     <TEXT>Upload template has no valid data headers</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>019</MSGNR>
+     <TEXT>Upload preview contains errors. Fix file or cancel preview</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>020</MSGNR>
+     <TEXT>Preview ready for &amp;1 Excel row(s). Choose Accept Upload</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>021</MSGNR>
+     <TEXT>Uploaded &amp;1 preview row(s) successfully</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>022</MSGNR>
+     <TEXT>Upload preview cancelled. No database changes saved</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>023</MSGNR>
+     <TEXT>Error saving upload preview to Database</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>024</MSGNR>
+     <TEXT>Upload error. Use SAP GUI for Windows and valid Excel file</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>025</MSGNR>
+     <TEXT>There is no upload preview to accept</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>026</MSGNR>
+     <TEXT>Use Accept Upload or Cancel Upload for current preview</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>030</MSGNR>
+     <TEXT>&amp;1 entries selected</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>031</MSGNR>
+     <TEXT>Table &amp;1 is locked by &amp;2. Opened in display mode</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>032</MSGNR>
+     <TEXT>Table &amp;1 is locked by &amp;2. Try again later</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>033</MSGNR>
+     <TEXT>Save blocked. Table &amp;1 is locked by &amp;2</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>034</MSGNR>
+     <TEXT>Save blocked. Fix or remove rows marked as Failed</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>035</MSGNR>
+     <TEXT>Save blocked. Required key field &amp;1 is empty</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>036</MSGNR>
+     <TEXT>Data saved to Database successfully</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>037</MSGNR>
+     <TEXT>Error saving data</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>038</MSGNR>
+     <TEXT>Save or discard pending ALV changes before &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>039</MSGNR>
+     <TEXT>SAP editing function is activated</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>049</MSGNR>
+     <TEXT>Display mode active</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>050</MSGNR>
+     <TEXT>New row appended. Fill in data and Save</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>051</MSGNR>
+     <TEXT>Create blocked. Table &amp;1 is locked by &amp;2</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>052</MSGNR>
+     <TEXT>Delete blocked. Table &amp;1 is locked by &amp;2</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>053</MSGNR>
+     <TEXT>Please select rows to delete</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>054</MSGNR>
+     <TEXT>Error deleting one or more selected rows</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>055</MSGNR>
+     <TEXT>Deleted &amp;1 row(s) from database</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>070</MSGNR>
+     <TEXT>Cloud sync blocked. Table &amp;1 is locked by &amp;2</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>071</MSGNR>
+     <TEXT>Cloud sync preview: &amp;1 new, &amp;2 updated, &amp;3 error(s)</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>072</MSGNR>
+     <TEXT>Cannot create push table for &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>073</MSGNR>
+     <TEXT>Pushed &amp;1 DB row(s) to Google Sheet</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>074</MSGNR>
+     <TEXT>Google Sheet Cloud instance already exists for &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>075</MSGNR>
+     <TEXT>Export blocked. Table &amp;1 is locked by &amp;2</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>076</MSGNR>
+     <TEXT>No change authorization for ZTGSHEET_MAP</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>077</MSGNR>
+     <TEXT>Created Google Sheet Cloud instance &amp;1. Uploading data</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>078</MSGNR>
+     <TEXT>Table &amp;1 has no Cloud instance. Use Export to Cloud</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>079</MSGNR>
+     <TEXT>Google Sheet: cannot build field catalog for &amp;1</TEXT>
+    </T100>
+    <T100>
+     <SPRSL>E</SPRSL>
+     <ARBGB>ZFLEX_MSG</ARBGB>
+     <MSGNR>080</MSGNR>
+     <TEXT>CPI &amp;1 error HTTP &amp;2 &amp;3: &amp;4</TEXT>
+    </T100>
+   </T100>
+  </asx:values>
+ </asx:abap>
+</abapGit>
