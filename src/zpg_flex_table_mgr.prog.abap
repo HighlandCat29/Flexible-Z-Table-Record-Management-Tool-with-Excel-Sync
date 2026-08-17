@@ -1,11 +1,11 @@
 *&---------------------------------------------------------------------*
-*& Report ZPG_FLEX_TABLE_MGR
+*& Report Z_FLEX_TABLE_MGR
 *&---------------------------------------------------------------------*
 *& Flexible Z-Table Record Management Tool (SE16N Style)
 *& Uses a blank selection screen 2000 as host for OO ALV.
 *& This approach is 100% robust on SAP GUI & WebGUI without SE51 screen painter.
 *&---------------------------------------------------------------------*
-REPORT zpg_flex_table_mgr.
+REPORT z_flex_table_mgr.
 
 INCLUDE <icon>.
 
@@ -150,6 +150,7 @@ CLASS lcl_alv_report DEFINITION.
              sync_from_cloud,
              push_to_cloud,
              export_to_cloud,
+             open_gsheet_online,
              refresh_header,
              refresh_mode_title,
              build_html_header IMPORTING io_dd TYPE REF TO cl_dd_document.
@@ -348,7 +349,18 @@ CLASS lcl_field_util IMPLEMENTATION.
 
     CASE is_fcat-datatype.
       WHEN 'DATS'. "#EC NOTEXT
-        REPLACE ALL OCCURRENCES OF '-' IN rv_value WITH ''. "#EC NOTEXT
+        DATA(lv_compare_date) = ||.
+        DATA(lv_compare_error) = ||.
+        PERFORM normalize_date_to_internal
+          USING rv_value
+          CHANGING lv_compare_date
+                   lv_compare_error.
+        IF lv_compare_error IS INITIAL.
+          rv_value = lv_compare_date.
+        ELSE.
+          REPLACE ALL OCCURRENCES OF '-' IN rv_value WITH ''. "#EC NOTEXT
+          REPLACE ALL OCCURRENCES OF '.' IN rv_value WITH ''. "#EC NOTEXT
+        ENDIF.
       WHEN 'TIMS'. "#EC NOTEXT
         REPLACE ALL OCCURRENCES OF ':' IN rv_value WITH ''. "#EC NOTEXT
     ENDCASE.
@@ -466,7 +478,7 @@ CLASS lcl_gsheet_payload IMPLEMENTATION.
     ENDLOOP.
 
     IF lt_push_fcat IS INITIAL.
-      gv_action_error = |No fields available to push for { p_tabnam }|. "#EC NOTEXT
+      gv_action_error = |GS: no fields to push for { p_tabnam }|. "#EC NOTEXT
       RETURN.
     ENDIF.
 
@@ -769,9 +781,9 @@ CLASS lcl_dynamic_handler IMPLEMENTATION.
     ls_lock_fcat-outputlen = 6.
     ls_lock_fcat-col_pos   = 1.
     ls_lock_fcat-edit      = space.
-    IF gv_edit_mode = abap_false.
-      ls_lock_fcat-no_out = 'X'. "#EC NOTEXT
-    ENDIF.
+    " Keep the exception/status column visible in both edit and display mode.
+    " The value (1/2/3) is rendered by LVC_LAYOUT-EXCP_FNAME/EXCP_LED.
+    ls_lock_fcat-no_out = space.
     APPEND ls_lock_fcat TO mt_fieldcat.
 
     CLEAR ls_lock_fcat.
@@ -835,8 +847,12 @@ CLASS lcl_dynamic_handler IMPLEMENTATION.
         <lvc_fcat>-edit = ' '.
         <lvc_fcat>-tech = 'X'. "#EC NOTEXT
         <lvc_fcat>-no_out = 'X'. "#EC NOTEXT
-      ELSEIF <lvc_fcat>-fieldname = 'ROW_STATUS' "#EC NOTEXT
-        OR <lvc_fcat>-fieldname = 'LOCK_OWNER' "#EC NOTEXT
+      ELSEIF <lvc_fcat>-fieldname = 'ROW_STATUS'. "#EC NOTEXT
+        <lvc_fcat>-edit = ' '.
+        " Status is an ALV exception column, not a user-editable field.
+        " It must stay visible after Save so 1/2/3 can render red/yellow/green.
+        <lvc_fcat>-no_out = space.
+      ELSEIF <lvc_fcat>-fieldname = 'LOCK_OWNER' "#EC NOTEXT
         OR <lvc_fcat>-fieldname = 'ROW_MESSAGE'. "#EC NOTEXT
         <lvc_fcat>-edit = ' '.
         IF iv_edit = abap_true.
@@ -967,28 +983,77 @@ CLASS lcl_excel_sync IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    DATA: dref_flat_tab TYPE REF TO data,
-          lv_xlsx       TYPE xstring,
-          lt_bin        TYPE solix_tab,
-          lv_size       TYPE i.
-    FIELD-SYMBOLS: <flat_tab> TYPE STANDARD TABLE,
-                   <flat_wa>  TYPE ANY.
-
-    CREATE DATA dref_flat_tab TYPE TABLE OF (p_tabnam).
-    ASSIGN dref_flat_tab->* TO <flat_tab>.
-
-    LOOP AT <dyn_table> ASSIGNING <dyn_wa>.
-      APPEND INITIAL LINE TO <flat_tab> ASSIGNING <flat_wa>.
-      MOVE-CORRESPONDING <dyn_wa> TO <flat_wa>.
-    ENDLOOP.
+    DATA: dref_export      TYPE REF TO data,
+          lv_xlsx          TYPE xstring,
+          lt_bin           TYPE solix_tab,
+          lv_size          TYPE i,
+          lo_base_struct   TYPE REF TO cl_abap_structdescr,
+          lo_export_struct TYPE REF TO cl_abap_structdescr,
+          lo_export_table  TYPE REF TO cl_abap_tabledescr,
+          lt_components     TYPE cl_abap_structdescr=>component_table,
+          lv_date_raw       TYPE string.
+    FIELD-SYMBOLS: <export_tab>   TYPE STANDARD TABLE,
+                   <export_wa>    TYPE ANY,
+                   <source_value> TYPE ANY,
+                   <export_value> TYPE ANY,
+                   <component>    LIKE LINE OF lt_components.
 
     TRY.
+        " Build an export-only structure. DATS fields are deliberately changed
+        " to CHAR10 so Excel receives a stable DD.MM.YYYY display value instead
+        " of a locale-dependent serial/date representation.
+        lo_base_struct ?= cl_abap_typedescr=>describe_by_name( p_tabnam ).
+        lt_components = lo_base_struct->get_components( ).
+        LOOP AT lt_components ASSIGNING <component>.
+          READ TABLE go_dyn_handler->mt_fieldcat INTO DATA(ls_export_fcat)
+            WITH KEY fieldname = <component>-name.
+          IF sy-subrc = 0 AND ls_export_fcat-datatype = 'DATS'.
+            <component>-type = cl_abap_elemdescr=>get_c( 10 ).
+          ENDIF.
+        ENDLOOP.
+
+        lo_export_struct = cl_abap_structdescr=>create( lt_components ).
+        lo_export_table = cl_abap_tabledescr=>create( lo_export_struct ).
+        CREATE DATA dref_export TYPE HANDLE lo_export_table.
+        ASSIGN dref_export->* TO <export_tab>.
+
+        LOOP AT <dyn_table> ASSIGNING <dyn_wa>.
+          APPEND INITIAL LINE TO <export_tab> ASSIGNING <export_wa>.
+          LOOP AT lt_components INTO DATA(ls_component).
+            ASSIGN COMPONENT ls_component-name OF STRUCTURE <dyn_wa>
+              TO <source_value>.
+            IF sy-subrc <> 0.
+              CONTINUE.
+            ENDIF.
+            ASSIGN COMPONENT ls_component-name OF STRUCTURE <export_wa>
+              TO <export_value>.
+            IF sy-subrc <> 0.
+              CONTINUE.
+            ENDIF.
+
+            READ TABLE go_dyn_handler->mt_fieldcat INTO DATA(ls_component_fcat)
+              WITH KEY fieldname = ls_component-name.
+            IF sy-subrc = 0 AND ls_component_fcat-datatype = 'DATS'.
+              lv_date_raw = |{ <source_value> }|.
+              IF lv_date_raw IS INITIAL OR lv_date_raw = '00000000'.
+                CLEAR <export_value>.
+              ELSEIF strlen( lv_date_raw ) = 8.
+                <export_value> = |{ lv_date_raw+6(2) }.{ lv_date_raw+4(2) }.{ lv_date_raw(4) }|.
+              ELSE.
+                <export_value> = lv_date_raw.
+              ENDIF.
+            ELSE.
+              <export_value> = <source_value>.
+            ENDIF.
+          ENDLOOP.
+        ENDLOOP.
+
         lv_xlsx = cl_fdt_xl_spreadsheet=>if_fdt_doc_spreadsheet~create_document(
           name          = |{ p_tabnam }.xlsx| "#EC NOTEXT
-          itab          = dref_flat_tab
+          itab          = dref_export
           iv_call_type  = if_fdt_doc_spreadsheet=>gc_call_dec_table
           iv_sheet_name = CONV string( p_tabnam ) ).
-      CATCH cx_fdt_excel_core INTO DATA(lx_xlsx).
+      CATCH cx_root INTO DATA(lx_xlsx).
         MESSAGE lx_xlsx->get_text( ) TYPE 'S' DISPLAY LIKE 'E'. "#EC NOTEXT
         RETURN.
     ENDTRY.
@@ -1221,6 +1286,32 @@ CLASS lcl_excel_sync IMPLEMENTATION.
           IF lv_cell_value IS NOT INITIAL.
             lv_row_has_data = abap_true.
           ENDIF.
+
+          " Excel may return dates in the display format DD.MM.YYYY.
+          " Convert them to SAP internal DATS format before assignment.
+          READ TABLE go_dyn_handler->mt_fieldcat INTO DATA(ls_upload_fcat)
+            WITH KEY fieldname = lv_fieldname.
+          IF sy-subrc = 0
+             AND ls_upload_fcat-datatype = 'DATS'
+             AND lv_cell_value IS NOT INITIAL.
+            DATA(lv_normalized_date) = ||.
+            DATA(lv_date_error) = ||.
+            PERFORM normalize_date_to_internal
+              USING lv_cell_value
+              CHANGING lv_normalized_date
+                       lv_date_error.
+            IF lv_date_error IS NOT INITIAL.
+              CLEAR ls_cell_error.
+              ls_cell_error-row = lines( <flat_tab> ).
+              ls_cell_error-fieldname = lv_fieldname.
+              ls_cell_error-message = lv_date_error.
+              APPEND ls_cell_error TO lt_cell_errors.
+              gv_upload_has_errors = abap_true.
+              CONTINUE.
+            ENDIF.
+            lv_cell_value = lv_normalized_date.
+          ENDIF.
+
           TRY.
               <lv_comp> = lv_cell_value.
             CATCH cx_root INTO DATA(lx_conversion).
@@ -1827,7 +1918,7 @@ CLASS lcl_event_handler IMPLEMENTATION.
   METHOD on_user_command.
     CASE e_ucomm.
       WHEN 'ZSAVE'. "#EC NOTEXT
-        go_alv_report->save_data( ).
+        go_alv_report->toggle_edit( ).
       WHEN 'ZUPACC'. "#EC NOTEXT
         go_alv_report->accept_upload_preview( ).
       WHEN 'ZUPCANCEL'. "#EC NOTEXT
@@ -1866,6 +1957,7 @@ CLASS lcl_event_handler IMPLEMENTATION.
     FIELD-SYMBOLS: <lv_lock_owner_chg> TYPE any,
                    <lv_lock_field_chg> TYPE any,
                    <lv_lock_info_chg> TYPE any,
+                   <lv_row_message_chg> TYPE any,
                    <lt_color_chg> TYPE lvc_t_scol.
     DATA: ls_color_chg TYPE lvc_s_scol.
 
@@ -1899,6 +1991,10 @@ CLASS lcl_event_handler IMPLEMENTATION.
       ASSIGN COMPONENT 'LOCK_INFO' OF STRUCTURE <dyn_wa> TO <lv_lock_info_chg>. "#EC NOTEXT
       IF sy-subrc = 0.
         <lv_lock_info_chg> = |Table locked by me; changed field { ls_mod_cell-fieldname }|. "#EC NOTEXT
+      ENDIF.
+      ASSIGN COMPONENT 'ROW_MESSAGE' OF STRUCTURE <dyn_wa> TO <lv_row_message_chg>. "#EC NOTEXT
+      IF sy-subrc = 0.
+        CLEAR <lv_row_message_chg>.
       ENDIF.
       PERFORM set_row_status USING <dyn_wa> 'Edit'. "#EC NOTEXT
       ASSIGN COMPONENT 'CELL_COLORS' OF STRUCTURE <dyn_wa> TO <lt_color_chg>. "#EC NOTEXT
@@ -1946,6 +2042,16 @@ CLASS lcl_gsheet_event_handler IMPLEMENTATION.
     APPEND ls_toolbar TO e_object->mt_toolbar.
 
     CLEAR ls_toolbar.
+    ls_toolbar-function  = 'ZGS_OPEN'. "#EC NOTEXT
+    ls_toolbar-icon      = icon_open_folder.
+    ls_toolbar-text      = 'Open Google Sheet'. "#EC NOTEXT
+    ls_toolbar-quickinfo = 'Open the mapped Google Sheet in a web browser'. "#EC NOTEXT
+    IF gv_gsheet_has_instance = abap_false.
+      ls_toolbar-disabled = 'X'. "#EC NOTEXT
+    ENDIF.
+    APPEND ls_toolbar TO e_object->mt_toolbar.
+
+    CLEAR ls_toolbar.
     ls_toolbar-function  = 'ZCLOUD'. "#EC NOTEXT
     ls_toolbar-icon      = icon_trend_down.
     ls_toolbar-text      = 'Sync from Cloud'. "#EC NOTEXT
@@ -1964,6 +2070,8 @@ CLASS lcl_gsheet_event_handler IMPLEMENTATION.
         PERFORM reload_gsheet_alv.
       WHEN 'ZGS_EXPORT'. "#EC NOTEXT
         go_alv_report->export_to_cloud( ).
+      WHEN 'ZGS_OPEN'. "#EC NOTEXT
+        go_alv_report->open_gsheet_online( ).
       WHEN 'ZCLOUD'. "#EC NOTEXT
         go_alv_report->sync_from_cloud( ).
     ENDCASE.
@@ -2214,26 +2322,52 @@ CLASS lcl_alv_report IMPLEMENTATION.
     ENDIF.
 
     LOOP AT <dyn_table> ASSIGNING FIELD-SYMBOL(<ls_save_check>).
-      ASSIGN COMPONENT 'ROW_STATUS' OF STRUCTURE <ls_save_check> TO FIELD-SYMBOL(<lv_save_status>). "#EC NOTEXT
-      IF sy-subrc = 0 AND <lv_save_status> = '1'.
+      ASSIGN COMPONENT 'ROW_STATUS' OF STRUCTURE <ls_save_check>
+        TO FIELD-SYMBOL(<lv_save_status_check>).
+      IF sy-subrc = 0 AND <lv_save_status_check> = '1'.
         MESSAGE s034(zflex_msg) DISPLAY LIKE 'E'.
         RETURN.
       ENDIF.
     ENDLOOP.
 
-    DATA: dref_flat_tab TYPE REF TO data,
-          dref_old_tab  TYPE REF TO data.
-    FIELD-SYMBOLS: <flat_tab> TYPE STANDARD TABLE,
-                   <flat_wa>  TYPE ANY,
-                   <old_tab>  TYPE STANDARD TABLE.
+    DATA: dref_flat_tab           TYPE REF TO data,
+          dref_old_tab            TYPE REF TO data,
+          dref_db_tab             TYPE REF TO data,
+          lv_save_total           TYPE i,
+          lv_save_success         TYPE i,
+          lv_save_error           TYPE i,
+          lv_save_message         TYPE string,
+          lv_row_is_new           TYPE abap_bool,
+          lv_row_is_edit          TYPE abap_bool,
+          lv_has_new_row          TYPE abap_bool,
+          lv_duplicate_key        TYPE abap_bool,
+          lv_key_text              TYPE string,
+          lv_key_hash              TYPE zflex_edit_lock-key_hash.
+
+    DATA: lt_seen_keys TYPE HASHED TABLE OF zflex_edit_lock-key_hash
+                         WITH UNIQUE KEY table_line,
+          lt_db_keys   TYPE HASHED TABLE OF zflex_edit_lock-key_hash
+                         WITH UNIQUE KEY table_line.
+
+    FIELD-SYMBOLS: <flat_tab>            TYPE STANDARD TABLE,
+                   <flat_wa>             TYPE ANY,
+                   <old_tab>             TYPE STANDARD TABLE,
+                   <db_tab>              TYPE STANDARD TABLE,
+                   <db_wa>               TYPE ANY,
+                   <lv_duplicate_is_new> TYPE any,
+                   <lv_save_new_count>   TYPE any,
+                   <lv_save_row_status> TYPE any.
+
     CREATE DATA dref_flat_tab TYPE TABLE OF (p_tabnam).
     ASSIGN dref_flat_tab->* TO <flat_tab>.
 
-    " Capture old data for audit delta comparison
     CREATE DATA dref_old_tab TYPE TABLE OF (p_tabnam).
     ASSIGN dref_old_tab->* TO <old_tab>.
+
+    " Capture old data for audit delta comparison
     READ TABLE go_filter->mt_where_clauses INTO DATA(ls_audit_where)
       WITH KEY tablename = p_tabnam.
+
     IF sy-subrc = 0 AND ls_audit_where-where_tab IS NOT INITIAL.
       SELECT * FROM (p_tabnam) INTO TABLE @<old_tab>
         WHERE (ls_audit_where-where_tab).
@@ -2244,30 +2378,174 @@ CLASS lcl_alv_report IMPLEMENTATION.
     LOOP AT <dyn_table> ASSIGNING <dyn_wa>.
       DATA(lv_missing_key) = abap_false.
       DATA(lv_missing_key_field) = VALUE fieldname( ).
+
       PERFORM validate_required_keys
         USING <dyn_wa>
-        CHANGING lv_missing_key lv_missing_key_field.
+        CHANGING lv_missing_key
+                 lv_missing_key_field.
+
       IF lv_missing_key = abap_true.
         IF go_grid IS BOUND.
           go_grid->refresh_table_display( ).
           cl_gui_cfw=>flush( ).
         ENDIF.
-        MESSAGE s035(zflex_msg) WITH lv_missing_key_field DISPLAY LIKE 'E'.
+
+        MESSAGE s035(zflex_msg)
+          WITH lv_missing_key_field
+          DISPLAY LIKE 'E'.
         RETURN.
       ENDIF.
+
       APPEND INITIAL LINE TO <flat_tab> ASSIGNING <flat_wa>.
       MOVE-CORRESPONDING <dyn_wa> TO <flat_wa>.
     ENDLOOP.
 
+    " Check duplicate primary keys before MODIFY. Open SQL MODIFY treats an
+    " existing key as UPDATE, so without this guard a manually created row
+    " with the same key appears successful and remains duplicated in the ALV.
+    CLEAR: lv_has_new_row,
+           lv_duplicate_key.
+
+    LOOP AT <dyn_table> ASSIGNING <dyn_wa>.
+      ASSIGN COMPONENT 'IS_NEW_ROW' OF STRUCTURE <dyn_wa>
+        TO <lv_duplicate_is_new>.
+      IF sy-subrc = 0 AND <lv_duplicate_is_new> = abap_true.
+        lv_has_new_row = abap_true.
+      ENDIF.
+
+      IF go_lock_mgr IS NOT BOUND.
+        lv_duplicate_key = abap_true.
+        PERFORM set_row_status USING <dyn_wa> 'Failed'.
+        PERFORM set_row_message USING <dyn_wa>
+          'Cannot validate database key'.
+        CONTINUE.
+      ENDIF.
+
+      lv_key_text = go_lock_mgr->build_key_text( <dyn_wa> ).
+      lv_key_hash = go_lock_mgr->build_key_hash( lv_key_text ).
+      IF lv_key_hash IS INITIAL.
+        lv_duplicate_key = abap_true.
+        PERFORM set_row_status USING <dyn_wa> 'Failed'.
+        PERFORM set_row_message USING <dyn_wa>
+          'Cannot build database key'.
+        CONTINUE.
+      ENDIF.
+
+      READ TABLE lt_seen_keys TRANSPORTING NO FIELDS
+        WITH TABLE KEY table_line = lv_key_hash.
+      IF sy-subrc = 0.
+        lv_duplicate_key = abap_true.
+        PERFORM set_row_status USING <dyn_wa> 'Failed'.
+        PERFORM set_row_message USING <dyn_wa>
+          'Duplicate key in ALV data'.
+      ELSE.
+        INSERT lv_key_hash INTO TABLE lt_seen_keys.
+      ENDIF.
+    ENDLOOP.
+
+    " When a filter is active, a duplicate may be outside the visible ALV.
+    " Read the database key set once and validate new rows against it.
+    IF lv_has_new_row = abap_true
+       AND go_lock_mgr IS BOUND.
+      CREATE DATA dref_db_tab TYPE TABLE OF (p_tabnam).
+      ASSIGN dref_db_tab->* TO <db_tab>.
+      SELECT * FROM (p_tabnam) INTO TABLE @<db_tab>.
+
+      LOOP AT <db_tab> ASSIGNING <db_wa>.
+        lv_key_text = go_lock_mgr->build_key_text( <db_wa> ).
+        lv_key_hash = go_lock_mgr->build_key_hash( lv_key_text ).
+        IF lv_key_hash IS NOT INITIAL.
+          INSERT lv_key_hash INTO TABLE lt_db_keys.
+        ENDIF.
+      ENDLOOP.
+
+      LOOP AT <dyn_table> ASSIGNING <dyn_wa>.
+        ASSIGN COMPONENT 'IS_NEW_ROW' OF STRUCTURE <dyn_wa>
+          TO <lv_duplicate_is_new>.
+        IF sy-subrc <> 0 OR <lv_duplicate_is_new> <> abap_true.
+          CONTINUE.
+        ENDIF.
+
+        lv_key_text = go_lock_mgr->build_key_text( <dyn_wa> ).
+        lv_key_hash = go_lock_mgr->build_key_hash( lv_key_text ).
+        READ TABLE lt_db_keys TRANSPORTING NO FIELDS
+          WITH TABLE KEY table_line = lv_key_hash.
+        IF sy-subrc = 0.
+          lv_duplicate_key = abap_true.
+          PERFORM set_row_status USING <dyn_wa> 'Failed'.
+          PERFORM set_row_message USING <dyn_wa>
+            'Duplicate key already exists in database'.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+    IF lv_duplicate_key = abap_true.
+      IF go_grid IS BOUND.
+        go_grid->refresh_table_display( ).
+        cl_gui_cfw=>flush( ).
+      ENDIF.
+      MESSAGE 'Database save cancelled: duplicate key detected'
+        TYPE 'S'
+        DISPLAY LIKE 'E'.
+      RETURN.
+    ENDIF.
+
+    " Count changed rows.
+    " IS_NEW_ROW = X: new row.
+    " ROW_STATUS = 2: edited row.
+    CLEAR lv_save_total.
+
+    LOOP AT <dyn_table> ASSIGNING <dyn_wa>.
+      CLEAR: lv_row_is_new,
+             lv_row_is_edit.
+
+      UNASSIGN: <lv_save_new_count>,
+                <lv_save_row_status>.
+
+      ASSIGN COMPONENT 'IS_NEW_ROW'
+        OF STRUCTURE <dyn_wa>
+        TO <lv_save_new_count>.
+
+      IF sy-subrc = 0
+         AND <lv_save_new_count> = abap_true.
+        lv_row_is_new = abap_true.
+      ENDIF.
+
+      ASSIGN COMPONENT 'ROW_STATUS'
+        OF STRUCTURE <dyn_wa>
+        TO <lv_save_row_status>.
+
+      IF sy-subrc = 0
+         AND <lv_save_row_status> = '2'.
+        lv_row_is_edit = abap_true.
+      ENDIF.
+
+      IF lv_row_is_new = abap_true
+         OR lv_row_is_edit = abap_true.
+        lv_save_total = lv_save_total + 1.
+      ENDIF.
+    ENDLOOP.
+
     MODIFY (p_tabnam) FROM TABLE <flat_tab>.
+
     IF sy-subrc = 0.
+      lv_save_success = lv_save_total.
+      CLEAR lv_save_error.
+
       COMMIT WORK AND WAIT.
-      MESSAGE s036(zflex_msg).
+
+      lv_save_message =
+        |Database save: { lv_save_success } success, { lv_save_error } error(s)|.
+      MESSAGE lv_save_message TYPE 'S'.
 
       " Reset IS_NEW_ROW flag since all data is now persisted
       FIELD-SYMBOLS: <lv_is_new> TYPE any.
+
       LOOP AT <dyn_table> ASSIGNING <dyn_wa>.
-        ASSIGN COMPONENT 'IS_NEW_ROW' OF STRUCTURE <dyn_wa> TO <lv_is_new>. "#EC NOTEXT
+        ASSIGN COMPONENT 'IS_NEW_ROW'
+          OF STRUCTURE <dyn_wa>
+          TO <lv_is_new>.
+
         IF sy-subrc = 0.
           CLEAR <lv_is_new>.
         ENDIF.
@@ -2276,13 +2554,23 @@ CLASS lcl_alv_report IMPLEMENTATION.
       IF go_lock_mgr IS BOUND.
         go_lock_mgr->release_session( ).
       ENDIF.
+
       PERFORM leave_edit_after_write.
       PERFORM lock_existing_keys USING <dyn_table>.
+
       LOOP AT <dyn_table> ASSIGNING <dyn_wa>.
-        PERFORM set_row_status USING <dyn_wa> 'Updated'. "#EC NOTEXT
-        PERFORM recolor_row_cells USING <dyn_wa> 3 5.
+        PERFORM set_row_status
+          USING <dyn_wa>
+                'Updated'.
+
+        PERFORM recolor_row_cells
+          USING <dyn_wa>
+                3
+                5.
       ENDLOOP.
+
       gv_has_changes = abap_false.
+
       " === AUDIT LOG: UPDATE/CREATE ===
       IF go_audit IS BOUND.
         go_audit->log_changes(
@@ -2293,16 +2581,28 @@ CLASS lcl_alv_report IMPLEMENTATION.
           it_old_data = <old_tab>
           iv_desc     = |Saved { lines( <flat_tab> ) } rows| ). "#EC NOTEXT
       ENDIF.
+
       go_grid->refresh_table_display( ).
+
     ELSE.
       ROLLBACK WORK.
+
+      CLEAR lv_save_success.
+      lv_save_error = lv_save_total.
+
       LOOP AT <dyn_table> ASSIGNING <dyn_wa>.
-        PERFORM set_row_status USING <dyn_wa> 'Failed'. "#EC NOTEXT
+        PERFORM set_row_status
+          USING <dyn_wa>
+                'Failed'.
       ENDLOOP.
+
       IF go_grid IS BOUND.
         go_grid->refresh_table_display( ).
       ENDIF.
-      MESSAGE s037(zflex_msg) DISPLAY LIKE 'E'.
+
+      lv_save_message =
+        |Database save: { lv_save_success } success, { lv_save_error } error(s)|.
+      MESSAGE lv_save_message TYPE 'S' DISPLAY LIKE 'E'.
       RETURN.
     ENDIF.
   ENDMETHOD.
@@ -2751,7 +3051,7 @@ CLASS lcl_alv_report IMPLEMENTATION.
                 PERFORM color_gsheet_cell USING <ls_target> ls_cmp_fcat-fieldname 3.
               CATCH cx_root INTO DATA(lx_assign).
                 lv_error_count = lv_error_count + 1.
-                lv_error_text = |Invalid Cloud value for { ls_cmp_fcat-fieldname }: { lx_assign->get_text( ) }|. "#EC NOTEXT
+                lv_error_text = |Invalid { ls_cmp_fcat-fieldname }: { lx_assign->get_text( ) }|. "#EC NOTEXT
                 PERFORM set_row_status USING <ls_target> 'Failed'. "#EC NOTEXT
                 PERFORM set_row_message USING <ls_target> lv_error_text.
                 PERFORM color_gsheet_cell USING <ls_target> ls_cmp_fcat-fieldname 6.
@@ -2793,7 +3093,7 @@ CLASS lcl_alv_report IMPLEMENTATION.
             CATCH cx_root INTO DATA(lx_new_assign).
               lv_new_row_error = abap_true.
               lv_error_count = lv_error_count + 1.
-              lv_error_text = |Invalid Cloud value for { ls_new_fcat-fieldname }: { lx_new_assign->get_text( ) }|. "#EC NOTEXT
+              lv_error_text = |Invalid { ls_new_fcat-fieldname }: { lx_new_assign->get_text( ) }|. "#EC NOTEXT
               PERFORM set_row_status USING <dyn_wa> 'Failed'. "#EC NOTEXT
               PERFORM set_row_message USING <dyn_wa> lv_error_text.
               PERFORM color_gsheet_cell USING <dyn_wa> ls_new_fcat-fieldname 6.
@@ -2890,6 +3190,9 @@ CLASS lcl_alv_report IMPLEMENTATION.
 
     PERFORM read_db_for_push CHANGING <lt_push_table>.
     IF gv_action_error IS NOT INITIAL.
+      IF strlen( gv_action_error ) > 70.
+        gv_action_error = 'GS: cannot prepare Cloud sync'. "#EC NOTEXT
+      ENDIF.
       MESSAGE gv_action_error TYPE 'S' DISPLAY LIKE 'E'. "#EC NOTEXT
       RETURN.
     ENDIF.
@@ -2956,6 +3259,7 @@ CLASS lcl_alv_report IMPLEMENTATION.
     PERFORM call_cpi_create_sheet
       CHANGING lv_sheet_id lv_worksheet lv_response.
     IF gv_action_error IS NOT INITIAL.
+      gv_action_error = 'GS: create Cloud Sheet failed'. "#EC NOTEXT
       MESSAGE gv_action_error TYPE 'S' DISPLAY LIKE 'E'. "#EC NOTEXT
       RETURN.
     ENDIF.
@@ -2974,9 +3278,42 @@ CLASS lcl_alv_report IMPLEMENTATION.
     me->push_to_cloud( ).
   ENDMETHOD.
 
+  METHOD open_gsheet_online.
+    DATA lv_url TYPE c LENGTH 1024.
+
+    SELECT SINGLE spreadsheet_id
+      FROM ztgsheet_map
+      INTO @DATA(lv_sheet_id)
+      WHERE tabname = @p_tabnam
+        AND active = 'X'. "#EC NOTEXT
+
+    IF sy-subrc <> 0 OR lv_sheet_id IS INITIAL.
+      MESSAGE |GS: no sheet mapped for { p_tabnam }| TYPE 'S' DISPLAY LIKE 'E'. "#EC NOTEXT
+      RETURN.
+    ENDIF.
+
+    lv_url = |https://docs.google.com/spreadsheets/d/{ lv_sheet_id }/edit|. "#EC NOTEXT
+
+    CALL FUNCTION 'CALL_BROWSER' "#EC NOTEXT
+      EXPORTING
+        url                    = lv_url
+        new_window             = 'X'
+      EXCEPTIONS
+        frontend_not_supported = 1
+        frontend_error         = 2
+        prog_not_found         = 3
+        no_batch               = 4
+        unspecified_error      = 5
+        OTHERS                 = 6.
+    IF sy-subrc <> 0.
+      MESSAGE |GS: browser error { sy-subrc }| TYPE 'S' DISPLAY LIKE 'E'. "#EC NOTEXT
+    ENDIF.
+  ENDMETHOD.
+
   METHOD toggle_edit.
     DATA: lv_answer TYPE c LENGTH 1,
-          lv_leave_edit TYPE abap_bool.
+          lv_leave_edit TYPE abap_bool,
+          lv_save_confirmed TYPE abap_bool.
 
     IF gv_upload_preview = abap_true.
       MESSAGE s026(zflex_msg) DISPLAY LIKE 'E'.
@@ -3000,10 +3337,16 @@ CLASS lcl_alv_report IMPLEMENTATION.
           IMPORTING
             answer                = lv_answer.
 
-        CASE lv_answer.
-          WHEN '1'.
-            save_data( ).
-            lv_leave_edit = abap_true.
+          CASE lv_answer.
+            WHEN '1'.
+              save_data( ).
+              " Save message must remain visible. If save failed,
+              " keep edit mode and do not overwrite the error message.
+              IF gv_has_changes = abap_true.
+                RETURN.
+              ENDIF.
+              lv_save_confirmed = abap_true.
+              lv_leave_edit = abap_true.
           WHEN '2'.
             IF go_lock_mgr IS BOUND.
               go_lock_mgr->release_session( ).
@@ -3023,7 +3366,13 @@ CLASS lcl_alv_report IMPLEMENTATION.
       IF lv_leave_edit = abap_true.
         gv_edit_mode = abap_false.
         go_dyn_handler->set_edit_mode( gv_edit_mode ).
-        go_filter->execute_select( ).
+
+        " save_data( ) already refreshed the grid and assigned the
+        " successful status. Re-selecting here would call
+        " lock_existing_keys and clear ROW_STATUS again.
+        IF lv_save_confirmed = abap_false.
+          go_filter->execute_select( ).
+        ENDIF.
       ENDIF.
     ELSE.
       IF go_lock_mgr IS BOUND
@@ -3037,7 +3386,9 @@ CLASS lcl_alv_report IMPLEMENTATION.
       go_dyn_handler->set_edit_mode( gv_edit_mode ).
     ENDIF.
 
-    PERFORM lock_existing_keys USING <dyn_table>.
+    IF lv_save_confirmed = abap_false.
+      PERFORM lock_existing_keys USING <dyn_table>.
+    ENDIF.
     go_grid->set_frontend_fieldcatalog( it_fieldcatalog = go_dyn_handler->mt_fieldcat ).
     IF gv_edit_mode = abap_true.
       go_grid->set_ready_for_input( i_ready_for_input = 1 ).
@@ -3053,7 +3404,7 @@ CLASS lcl_alv_report IMPLEMENTATION.
 
     IF gv_edit_mode = abap_true.
       MESSAGE s039(zflex_msg).
-    ELSE.
+    ELSEIF lv_save_confirmed = abap_false.
       MESSAGE s049(zflex_msg).
     ENDIF.
   ENDMETHOD.
@@ -3411,7 +3762,7 @@ FORM load_gsheet_data.
   UNASSIGN <gsheet_table>.
   ASSIGN gr_gsheet_table->* TO <gsheet_table>.
   IF sy-subrc <> 0 OR <gsheet_table> IS NOT ASSIGNED.
-    gv_gsheet_status = |Google Sheet: cannot create dynamic table for { p_tabnam }|. "#EC NOTEXT
+    gv_gsheet_status = |GS: cannot prepare { p_tabnam }|. "#EC NOTEXT
     RETURN.
   ENDIF.
   CLEAR <gsheet_table>.
@@ -3424,13 +3775,13 @@ FORM load_gsheet_data.
 
   IF sy-subrc <> 0.
     gv_gsheet_can_export = abap_true.
-    gv_gsheet_status = |Google Sheet: table { p_tabnam } has no Cloud instance. Use Export to Cloud to create one.|. "#EC NOTEXT
+    gv_gsheet_status = |GS: { p_tabnam } has no sheet - Export to Cloud|. "#EC NOTEXT
     RETURN.
   ENDIF.
 
   IF ls_map-spreadsheet_id IS INITIAL OR ls_map-worksheet_name IS INITIAL.
     gv_gsheet_can_export = abap_true.
-    gv_gsheet_status = |Google Sheet: Cloud instance mapping for { p_tabnam } is incomplete. Use Export to Cloud to create one.|. "#EC NOTEXT
+    gv_gsheet_status = |GS: { p_tabnam } mapping incomplete - Export to Cloud|. "#EC NOTEXT
     RETURN.
   ENDIF.
 
@@ -3457,7 +3808,7 @@ FORM load_gsheet_data.
     EXCEPTIONS
       OTHERS      = 1 ).
   IF sy-subrc <> 0 OR lo_client IS NOT BOUND.
-    gv_gsheet_status = |Google Sheet: cannot create HTTP destination { lv_dest }|. "#EC NOTEXT
+    gv_gsheet_status = 'GS: CPI destination unavailable'. "#EC NOTEXT
     RETURN.
   ENDIF.
 
@@ -3470,14 +3821,14 @@ FORM load_gsheet_data.
 
   lo_client->send( EXCEPTIONS OTHERS = 1 ).
   IF sy-subrc <> 0.
-    gv_gsheet_status = |Google Sheet: cannot send request to CPI|. "#EC NOTEXT
+    gv_gsheet_status = 'GS: CPI request failed'. "#EC NOTEXT
     lo_client->close( ).
     RETURN.
   ENDIF.
 
   lo_client->receive( EXCEPTIONS OTHERS = 1 ).
   IF sy-subrc <> 0.
-    gv_gsheet_status = |Google Sheet: cannot receive response from CPI|. "#EC NOTEXT
+    gv_gsheet_status = 'GS: CPI response failed'. "#EC NOTEXT
     lo_client->close( ).
     RETURN.
   ENDIF.
@@ -3490,38 +3841,38 @@ FORM load_gsheet_data.
   lv_json = lo_client->response->get_cdata( ).
   lo_client->close( ).
 
-  IF lv_code < 200 OR lv_code >= 300.
-    gv_gsheet_status = |Google Sheet: CPI error HTTP { lv_code } { lv_reason }: { lv_json }|. "#EC NOTEXT
+  IF lv_code < 200 OR lv_code >= 300. "#kiem tra lõi ko
+    gv_gsheet_status = |GS: CPI HTTP { lv_code }|. "#EC NOTEXT
     RETURN.
   ENDIF.
 
-  TRY.
+  TRY.  " Đổi JSON thành Bảng dữ liệu
       /ui2/cl_json=>deserialize(
         EXPORTING
           json = lv_json
         CHANGING
           data = <gsheet_table> ).
 
-      IF <gsheet_table> IS INITIAL.
-        gv_gsheet_status = |Google Sheet: mapping found, but no rows returned for { p_tabnam }|. "#EC NOTEXT
+      IF <gsheet_table> IS INITIAL. "Cập nhật thông báo số lượng dòng & Chạy 2 hàm đối soát
+        gv_gsheet_status = |GS: { p_tabnam } sheet is empty|. "#EC NOTEXT
       ELSE.
-        gv_gsheet_status = |Google Sheet: { lines( <gsheet_table> ) } rows from worksheet { ls_map-worksheet_name }|. "#EC NOTEXT
+        gv_gsheet_status = |GS: { lines( <gsheet_table> ) } rows - { ls_map-worksheet_name }|. "#EC NOTEXT
       ENDIF.
       PERFORM compare_gsheet_with_ztab.
       PERFORM validate_gsheet_raw_json USING lv_json.
     CATCH cx_root INTO DATA(lx_gsheet_error).
       CLEAR <gsheet_table>.
-      gv_gsheet_status = |Google Sheet: { lx_gsheet_error->get_text( ) }|. "#EC NOTEXT
+      gv_gsheet_status = 'GS: load error'. "#EC NOTEXT
   ENDTRY.
 ENDFORM.
 
 FORM add_gsheet_query_param USING pv_name  TYPE string
                                   pv_value TYPE string
                             CHANGING pv_uri TYPE string.
-  DATA(lv_sep) = COND string( WHEN pv_uri CS '?' THEN '&' ELSE '?' ). "#EC NOTEXT
+  DATA(lv_sep) = COND string( WHEN pv_uri CS '?' THEN '&' ELSE '?' ). "Tự động nối thêm các tham số vào đằng sau đường dẫn URL một cách chuẩn xác theo đúng quy tắc của mạng Internet"
   DATA(lv_value) = cl_http_utility=>escape_url( pv_value ).
 
-  pv_uri = |{ pv_uri }{ lv_sep }{ pv_name }={ lv_value }|. "#EC NOTEXT
+  pv_uri = |{ pv_uri }{ lv_sep }{ pv_name }={ lv_value }|. "#Ghép tất cả lại
 ENDFORM.
 
 FORM read_db_for_push CHANGING pt_push TYPE ANY TABLE.
@@ -3530,7 +3881,7 @@ FORM read_db_for_push CHANGING pt_push TYPE ANY TABLE.
   CLEAR pt_push.
   ASSIGN pt_push TO <lt_push>.
   IF sy-subrc <> 0 OR <lt_push> IS NOT ASSIGNED.
-    gv_action_error = |Cannot assign push table for { p_tabnam }|. "#EC NOTEXT
+    gv_action_error = |Cannot assign push table for { p_tabnam }|. "Đọc dữ liệu từ bảng Z trong SAP Database ra để chuẩn bị đẩy (Push) lên Google SheetT
     RETURN.
   ENDIF.
 
@@ -3544,7 +3895,7 @@ FORM read_db_for_push CHANGING pt_push TYPE ANY TABLE.
   ENDIF.
 ENDFORM.
 
-FORM build_sheet_payload USING pt_push TYPE ANY TABLE
+FORM build_sheet_payload USING pt_push TYPE ANY TABLE "Đóng gói toàn bộ dữ liệu bảng Z vừa đọc từ SAP Database thành một chuỗi văn bản dạng JSON hoàn chỉnh để sẵn sàng gửi lên Google Sheet
                          CHANGING pv_payload   TYPE string
                                   pv_range     TYPE string
                                   pv_row_count TYPE i.
@@ -3555,7 +3906,7 @@ FORM build_sheet_payload USING pt_push TYPE ANY TABLE
               cv_row_count = pv_row_count ).
 ENDFORM.
 
-FORM call_cpi_create_sheet CHANGING pv_sheet_id  TYPE string
+FORM call_cpi_create_sheet CHANGING pv_sheet_id  TYPE string "Định nghĩa ra cái khuôn (cấu trúc mẫu) để hứng và đọc dữ liệu JSON trả về sau khi tạo xong file Google Sheet
                                     pv_worksheet TYPE string
                                     pv_response  TYPE string.
   TYPES: BEGIN OF ty_create_sheet_prop,
@@ -3603,7 +3954,7 @@ FORM call_cpi_create_sheet CHANGING pv_sheet_id  TYPE string
     EXCEPTIONS
       OTHERS      = 1 ).
   IF sy-subrc <> 0 OR lo_client IS NOT BOUND.
-    gv_action_error = |Google Sheet: cannot create HTTP destination { lc_default_dest }|. "#EC NOTEXT
+    gv_action_error = 'GS: CPI destination unavailable'. "#EC NOTEXT
     RETURN.
   ENDIF.
 
@@ -3619,14 +3970,14 @@ FORM call_cpi_create_sheet CHANGING pv_sheet_id  TYPE string
   lo_client->send( EXCEPTIONS OTHERS = 1 ).
   IF sy-subrc <> 0.
     lo_client->close( ).
-    gv_action_error = 'Google Sheet: cannot send create request to CPI'. "#EC NOTEXT
+    gv_action_error = 'Google Sheet: cannot send create request to CPI'. "#Lỗi mở cổng
     RETURN.
   ENDIF.
 
   lo_client->receive( EXCEPTIONS OTHERS = 1 ).
   IF sy-subrc <> 0.
     lo_client->close( ).
-    gv_action_error = 'Google Sheet: cannot receive create response from CPI'. "#EC NOTEXT
+    gv_action_error = 'Google Sheet: cannot receive create response from CPI'. "#Lỗi nhận tin
     RETURN.
   ENDIF.
 
@@ -3639,7 +3990,7 @@ FORM call_cpi_create_sheet CHANGING pv_sheet_id  TYPE string
   lo_client->close( ).
 
   IF lv_code < 200 OR lv_code >= 300.
-    gv_action_error = |CPI create error HTTP { lv_code } { lv_reason }: { pv_response }|. "#EC NOTEXT
+    gv_action_error = |GS: CPI create HTTP { lv_code }|. "#EC NOTEXT
     RETURN.
   ENDIF.
 
@@ -3651,7 +4002,7 @@ FORM call_cpi_create_sheet CHANGING pv_sheet_id  TYPE string
         CHANGING
           data        = ls_create ).
     CATCH cx_root INTO DATA(lx_create_json).
-      gv_action_error = |Google Sheet: cannot parse create response: { lx_create_json->get_text( ) }|. "#EC NOTEXT
+      gv_action_error = 'GS: invalid create response'. "#EC NOTEXT
       RETURN.
   ENDTRY.
 
@@ -3664,7 +4015,7 @@ FORM call_cpi_create_sheet CHANGING pv_sheet_id  TYPE string
   ENDIF.
 
   IF pv_sheet_id IS INITIAL.
-    gv_action_error = |Google Sheet: create response has no spreadsheetId: { pv_response }|. "#EC NOTEXT
+    gv_action_error = 'GS: create response has no Sheet ID'. "#EC NOTEXT
     RETURN.
   ENDIF.
 ENDFORM.
@@ -3722,7 +4073,7 @@ FORM upsert_gsheet_mapping USING pv_sheet_id  TYPE string
 
   MODIFY ztgsheet_map FROM ls_map.
   IF sy-subrc <> 0.
-    gv_action_error = |Google Sheet: cannot save mapping for { p_tabnam }|. "#EC NOTEXT
+    gv_action_error = |GS: cannot save mapping for { p_tabnam }|. "#EC NOTEXT
     RETURN.
   ENDIF.
 
@@ -3750,12 +4101,12 @@ FORM call_cpi_push USING pv_payload TYPE string
       AND active = 'X'. "#EC NOTEXT
 
   IF sy-subrc <> 0.
-    gv_action_error = |Google Sheet: table { p_tabnam } has no Cloud instance. Use Export to Cloud to create one.|. "#EC NOTEXT
+    gv_action_error = |GS: { p_tabnam } has no sheet - export first|. "#EC NOTEXT
     RETURN.
   ENDIF.
 
   IF ls_map-spreadsheet_id IS INITIAL OR ls_map-worksheet_name IS INITIAL.
-    gv_action_error = |Google Sheet: mapping for { p_tabnam } is missing SheetID/WorkSheetName|. "#EC NOTEXT
+    gv_action_error = |GS: { p_tabnam } mapping incomplete|. "#EC NOTEXT
     RETURN.
   ENDIF.
 
@@ -3777,7 +4128,7 @@ FORM call_cpi_push USING pv_payload TYPE string
     EXCEPTIONS
       OTHERS      = 1 ).
   IF sy-subrc <> 0 OR lo_client IS NOT BOUND.
-    gv_action_error = |Google Sheet: cannot create HTTP destination { lv_dest }|. "#EC NOTEXT
+    gv_action_error = 'GS: CPI destination unavailable'. "#EC NOTEXT
     RETURN.
   ENDIF.
 
@@ -3793,14 +4144,14 @@ FORM call_cpi_push USING pv_payload TYPE string
   lo_client->send( EXCEPTIONS OTHERS = 1 ).
   IF sy-subrc <> 0.
     lo_client->close( ).
-    gv_action_error = 'Google Sheet: cannot send push request to CPI'. "#EC NOTEXT
+    gv_action_error = 'GS: CPI push request failed'. "#EC NOTEXT
     RETURN.
   ENDIF.
 
   lo_client->receive( EXCEPTIONS OTHERS = 1 ).
   IF sy-subrc <> 0.
     lo_client->close( ).
-    gv_action_error = 'Google Sheet: cannot receive push response from CPI'. "#EC NOTEXT
+    gv_action_error = 'GS: CPI push response failed'. "#EC NOTEXT
     RETURN.
   ENDIF.
 
@@ -3813,7 +4164,7 @@ FORM call_cpi_push USING pv_payload TYPE string
   lo_client->close( ).
 
   IF lv_code < 200 OR lv_code >= 300.
-    gv_action_error = |CPI push error HTTP { lv_code } { lv_reason }: { pv_response }|. "#EC NOTEXT
+    gv_action_error = |GS: CPI push HTTP { lv_code }|. "#EC NOTEXT
     RETURN.
   ENDIF.
 ENDFORM.
@@ -3832,7 +4183,7 @@ FORM build_gsheet_fieldcat CHANGING pt_fieldcat TYPE lvc_t_fcat.
       OTHERS                 = 3.
 
   IF sy-subrc <> 0.
-    gv_gsheet_status = |Google Sheet: cannot build field catalog for { p_tabnam }|. "#EC NOTEXT
+    gv_gsheet_status = |GS: field catalog error - { p_tabnam }|. "#EC NOTEXT
     RETURN.
   ENDIF.
 
@@ -3907,7 +4258,7 @@ FORM validate_gsheet_raw_json USING pv_json TYPE string.
 
       IF lv_error IS NOT INITIAL.
         lv_err_rows = lv_err_rows + 1.
-        lv_message = |Invalid Cloud value { ls_raw_fcat-fieldname }={ lv_raw }: { lv_error }|. "#EC NOTEXT
+        lv_message = |Invalid { ls_raw_fcat-fieldname }: { lv_error }|. "#EC NOTEXT
         PERFORM set_gsheet_message USING <ls_sheet_row> lv_message.
         PERFORM color_gsheet_cell USING <ls_sheet_row> ls_raw_fcat-fieldname 6.
       ENDIF.
@@ -3915,7 +4266,7 @@ FORM validate_gsheet_raw_json USING pv_json TYPE string.
   ENDLOOP.
 
   IF lv_err_rows > 0.
-    gv_gsheet_status = |{ gv_gsheet_status }; { lv_err_rows } invalid Cloud cell(s)|. "#EC NOTEXT
+    gv_gsheet_status = |{ gv_gsheet_status }; { lv_err_rows } invalid cells|. "#EC NOTEXT
   ENDIF.
 ENDFORM.
 
@@ -3940,6 +4291,73 @@ FORM get_json_field_raw_value USING pv_object    TYPE string
   FIND PCRE lv_pattern IN pv_object SUBMATCHES pv_value.
   IF sy-subrc = 0.
     CONDENSE pv_value NO-GAPS.
+  ENDIF.
+ENDFORM.
+
+FORM normalize_date_to_internal USING pv_input TYPE string
+                               CHANGING pv_value TYPE string
+                                        pv_error TYPE string.
+  DATA lv_value TYPE string.
+
+  CLEAR: pv_value,
+         pv_error.
+  lv_value = pv_input.
+  CONDENSE lv_value NO-GAPS.
+
+  IF lv_value IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  " Normalize common external separators first.
+  REPLACE ALL OCCURRENCES OF '/' IN lv_value WITH '.'. "#EC NOTEXT
+  REPLACE ALL OCCURRENCES OF '-' IN lv_value WITH '.'. "#EC NOTEXT
+
+  IF strlen( lv_value ) = 8.
+    IF lv_value CN '0123456789'.
+      pv_error = 'date DD.MM.YYYY or YYYYMMDD expected'. "#EC NOTEXT
+      RETURN.
+    ENDIF.
+    " SAP internal format YYYYMMDD.
+    pv_value = lv_value.
+  ELSEIF strlen( lv_value ) = 10.
+    IF lv_value+4(1) = '.'
+       AND lv_value+7(1) = '.'
+       AND lv_value(4) CO '0123456789'
+       AND lv_value+5(2) CO '0123456789'
+       AND lv_value+8(2) CO '0123456789'.
+      " ISO format YYYY-MM-DD / YYYY.MM.DD.
+      pv_value = |{ lv_value(4) }{ lv_value+5(2) }{ lv_value+8(2) }|.
+    ELSEIF lv_value+2(1) = '.'
+           AND lv_value+5(1) = '.'
+           AND lv_value(2) CO '0123456789'
+           AND lv_value+3(2) CO '0123456789'
+           AND lv_value+6(4) CO '0123456789'.
+      " User/Excel format DD.MM.YYYY.
+      pv_value = |{ lv_value+6(4) }{ lv_value+3(2) }{ lv_value(2) }|.
+    ELSE.
+      pv_error = 'date DD.MM.YYYY or YYYYMMDD expected'. "#EC NOTEXT
+      RETURN.
+    ENDIF.
+  ELSE.
+    pv_error = 'date DD.MM.YYYY or YYYYMMDD expected'. "#EC NOTEXT
+    RETURN.
+  ENDIF.
+
+  IF strlen( pv_value ) <> 8 OR pv_value CN '0123456789'.
+    CLEAR pv_value.
+    pv_error = 'invalid date format'. "#EC NOTEXT
+    RETURN.
+  ENDIF.
+
+  CALL FUNCTION 'DATE_CHECK_PLAUSIBILITY' "#EC NOTEXT
+    EXPORTING
+      date                      = CONV sy-datum( pv_value )
+    EXCEPTIONS
+      plausibility_check_failed = 1
+      OTHERS                    = 2.
+  IF sy-subrc <> 0.
+    CLEAR pv_value.
+    pv_error = 'invalid date'. "#EC NOTEXT
   ENDIF.
 ENDFORM.
 
@@ -3972,10 +4390,16 @@ FORM validate_cloud_raw_value USING ps_fcat TYPE lvc_s_fcat
         pv_error = 'number expected'. "#EC NOTEXT
       ENDIF.
     WHEN 'DATS'. "#EC NOTEXT
-      REPLACE ALL OCCURRENCES OF '-' IN lv_value WITH ''. "#EC NOTEXT
-      IF strlen( lv_value ) <> 8 OR lv_value CN '0123456789'.
-        pv_error = 'date YYYYMMDD expected'. "#EC NOTEXT
+      DATA(lv_normalized_date) = ||.
+      DATA(lv_date_error) = ||.
+      PERFORM normalize_date_to_internal
+        USING lv_value
+        CHANGING lv_normalized_date
+                 lv_date_error.
+      IF lv_date_error IS NOT INITIAL.
+        pv_error = lv_date_error.
       ELSE.
+        lv_value = lv_normalized_date.
         CALL FUNCTION 'DATE_CHECK_PLAUSIBILITY' "#EC NOTEXT
           EXPORTING
             date                      = CONV sy-datum( lv_value )
@@ -4008,8 +4432,15 @@ FORM normalize_cloud_value USING ps_fcat TYPE lvc_s_fcat
 
   CASE ps_fcat-datatype.
     WHEN 'DATS'. "#EC NOTEXT
-      CONDENSE lv_value NO-GAPS.
-      REPLACE ALL OCCURRENCES OF '-' IN lv_value WITH ''. "#EC NOTEXT
+      DATA(lv_normalized_date) = ||.
+      DATA(lv_date_error) = ||.
+      PERFORM normalize_date_to_internal
+        USING lv_value
+        CHANGING lv_normalized_date
+                 lv_date_error.
+      IF lv_date_error IS INITIAL.
+        lv_value = lv_normalized_date.
+      ENDIF.
     WHEN 'TIMS'. "#EC NOTEXT
       CONDENSE lv_value NO-GAPS.
       REPLACE ALL OCCURRENCES OF ':' IN lv_value WITH ''. "#EC NOTEXT
@@ -4209,7 +4640,7 @@ FORM compare_gsheet_with_ztab.
   ENDLOOP.
 
   IF lv_missing_db > 0.
-    gv_gsheet_status = |{ gv_gsheet_status }; { lv_missing_db } Z-table row(s) missing in Cloud|. "#EC NOTEXT
+    gv_gsheet_status = |{ gv_gsheet_status }; { lv_missing_db } DB rows missing|. "#EC NOTEXT
   ENDIF.
 
   IF go_grid IS BOUND.
@@ -4311,3 +4742,5 @@ START-OF-SELECTION.
   " Reset user commands before displaying host screen 2000 to prevent WebGUI from immediately exiting.
   CLEAR: sy-ucomm, sscrfields-ucomm.
   CALL SELECTION-SCREEN 2000.
+
+* === Dependency context for ZPG_FLEX_TABLE_MGR (9 deps) ===
